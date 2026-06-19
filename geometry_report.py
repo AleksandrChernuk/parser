@@ -14,6 +14,9 @@
 """
 import io, os, glob, sys
 from cadquery import importers
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAbs import GeomAbs_Cylinder
+from OCP.BRepTools import BRepTools
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -63,12 +66,13 @@ def dxf_info(path):
         elif name == "CIRCLE":
             r = [float(v) for c, v in codes if c == 40]
             if r: circ.append(3.14159 * r[0] ** 2)
-    area = None
+    area = None; inner = 0
     if polys:
-        o = max(polys); area = o - (sum(p for p in polys if p < o) + sum(circ))
+        o = max(polys); inner = len([p for p in polys if p < o])
+        area = o - (sum(p for p in polys if p < o) + sum(circ))
     w = (max(bbx) - min(bbx)) if bbx else 0
     h = (max(bby) - min(bby)) if bby else 0
-    return {"area": area, "w": round(w, 1), "h": round(h, 1), "holes": len(circ)}
+    return {"area": area, "w": round(w, 1), "h": round(h, 1), "holes": len(circ) + inner}
 
 
 def dxf_meta(name):
@@ -85,6 +89,20 @@ def dxf_meta(name):
 
 
 # ---------- STEP: тіла ----------
+def solid_holes(s, t):
+    """Справжні отвори: циліндр зі стінкою ~товщини листа і майже повним колом."""
+    holes = {}
+    for f in s.Faces():
+        ad = BRepAdaptor_Surface(f.wrapped)
+        if ad.GetType() != GeomAbs_Cylinder:
+            continue
+        umin, umax, vmin, vmax = BRepTools.UVBounds_s(f.wrapped)
+        if abs(vmax - vmin) <= t * 1.6 and abs(umax - umin) > 3.0:
+            cyl = ad.Cylinder(); ax = cyl.Axis().Location()
+            holes[(round(ax.X(), 1), round(ax.Y(), 1), round(ax.Z(), 1))] = round(cyl.Radius() * 2, 1)
+    return sorted(holes.values())
+
+
 def step_solids(path):
     r = importers.importStep(path)
     out = []
@@ -92,7 +110,7 @@ def step_solids(path):
         V, A = s.Volume(), s.Area()
         t = 2 * V / A
         bb = s.BoundingBox()
-        out.append({"t": t, "area": V / t,
+        out.append({"t": t, "area": V / t, "holes": solid_holes(s, t),
                     "bbox": tuple(sorted([round(bb.xlen, 1), round(bb.ylen, 1), round(bb.zlen, 1)]))})
     return out
 
@@ -138,12 +156,15 @@ def run(p):
                     dd = abs(d["area"] - s["area"]) / s["area"]
                     if dd < bd: bd, best = dd, d
                 bx = "x".join(str(x) for x in s["bbox"])
+                mh = len(s["holes"])
                 if best and bd <= 0.20:
                     flag = "OK" if bd < 0.05 else ("~ перевір" if bd < 0.10 else "!!РІЗНІ")
-                    tgt = f"{best['name'][:34]} ({bd*100:.1f}% {flag})"
+                    dh = best["holes"]
+                    hole_note = "" if mh == dh else f"  !! ОТВОРИ: модель {mh} / DXF {dh}"
+                    tgt = f"{best['name'][:34]} ({bd*100:.1f}% {flag}){hole_note}"
                 else:
                     tgt = "— немає відповідного DXF (стороння деталь?)"
-                p(f"  {i+1:>5} {s['t']:>5.2f} {s['area']:>10.0f}  {bx:>16}  ->  {tgt}\n")
+                p(f"  {i+1:>5} {s['t']:>5.2f} {s['area']:>10.0f} отв.{mh:>2}  {bx:>14}  ->  {tgt}\n")
         p("\n")
     if not any_step:
         p("Не знайдено папки, де поруч є і STEP (.stp/.step), і DXF.\n")
