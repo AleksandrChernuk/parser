@@ -26,15 +26,26 @@ else:
 
 INSUNITS = {0: "не задано", 1: "дюйми", 4: "мм", 5: "см", 6: "м"}
 
-# Товщина (+ матеріал) на початку імені DXF: "1,5мм Ст.3 ..." / "4 мм 09г2с ..."
-DXF_THK_RE = re.compile(r"^\s*([\d.,]+)\s*мм\s+(\S+)", re.IGNORECASE)
+# Товщина: число перед "мм" у будь-якому місці імені ("1,5мм", "_1,5 мм", "3мм")
+DXF_THK_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*мм", re.IGNORECASE)
+# Марка сталі/матеріалу: типові позначення в будь-якому місці імені
+GRADE_RE = re.compile(
+    r"(Ст\.?\s?\d+[а-яёіїє]*"          # Ст3, Ст.3, Ст 3
+    r"|\d{2}[ГгҐ]\d[СсC]\w*"           # 09Г2С
+    r"|\d{2}[кК][пП]|\d{2}[пП][сС]"    # 08кп, 08пс
+    r"|AISI\s?\d+|\d{2}[хХ]\d+[нНтТ]\d+\w*)",  # AISI304, 12Х18Н10Т
+    re.IGNORECASE)
 
 
 def dxf_thickness_material(fname):
-    m = DXF_THK_RE.match(fname)
-    if not m:
-        return None, None
-    return float(m.group(1).replace(",", ".")), m.group(2)
+    th = mat = None
+    m = DXF_THK_RE.search(fname)
+    if m:
+        th = float(m.group(1).replace(",", "."))
+    g = GRADE_RE.search(fname)
+    if g:
+        mat = re.sub(r"\s+", "", g.group(1))   # нормалізуємо: "Ст 3" -> "Ст3"
+    return th, mat
 
 
 # ---------- DXF: геометрія ----------
