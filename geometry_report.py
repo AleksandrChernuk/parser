@@ -50,7 +50,7 @@ def _poly_area(pts):
 
 def dxf_info(path):
     ents = _entities(path)
-    polys, circ, cp = [], [], None
+    polys, circ_a, cp, dia = [], [], None, []
     bbx, bby = [], []
     for name, codes in ents:
         xs = [float(v) for c, v in codes if c == 10]
@@ -65,14 +65,25 @@ def dxf_info(path):
             polys.append(_poly_area(list(zip(xs, ys))))
         elif name == "CIRCLE":
             r = [float(v) for c, v in codes if c == 40]
-            if r: circ.append(3.14159 * r[0] ** 2)
+            if r: circ_a.append(3.14159 * r[0] ** 2); dia.append(round(r[0] * 2, 1))
     area = None; inner = 0
     if polys:
         o = max(polys); inner = len([p for p in polys if p < o])
-        area = o - (sum(p for p in polys if p < o) + sum(circ))
+        area = o - (sum(p for p in polys if p < o) + sum(circ_a))
     w = (max(bbx) - min(bbx)) if bbx else 0
     h = (max(bby) - min(bby)) if bby else 0
-    return {"area": area, "w": round(w, 1), "h": round(h, 1), "holes": len(circ) + inner}
+    return {"area": area, "w": round(w, 1), "h": round(h, 1),
+            "holes": len(dia) + inner, "dia": sorted(dia), "inner": inner}
+
+
+def missing_dias(model_d, dxf_d, tol=0.6):
+    """Які діаметри з моделі не покриті в DXF (мультимножинна різниця)."""
+    rem = list(dxf_d); miss = []
+    for d in model_d:
+        hit = next((x for x in rem if abs(x - d) <= tol), None)
+        if hit is not None: rem.remove(hit)
+        else: miss.append(d)
+    return miss
 
 
 def dxf_meta(name):
@@ -159,10 +170,19 @@ def run(p):
                 hole_ok = (mh == dh)
                 th_dxf = best["th"]
                 th_ok = (th_dxf is None) or abs(round(s["t"]) - th_dxf) < 0.6
+                # точний перелік відсутніх Ø надійний лише коли DXF малює отвори колами
+                miss = missing_dias(s["holes"], best["dia"]) if best.get("inner", 0) == 0 else []
                 issues = []
                 if not th_ok: issues.append(f"товщина: модель {s['t']:.1f} / DXF {th_dxf}")
                 if bd >= 0.10: issues.append(f"площа розходиться на {bd*100:.0f}%")
-                if not hole_ok: issues.append(f"отвори: модель {mh} / DXF {dh}")
+                if not hole_ok:
+                    if miss:
+                        extra = f", відсутні в DXF Ø{sorted(set(miss))} (×{len(miss)})"
+                    elif best.get("inner"):
+                        extra = " (DXF малює отвори полілініями — звір вручну)"
+                    else:
+                        extra = ""
+                    issues.append(f"отвори: модель {mh} / DXF {dh}{extra}")
 
                 if issues:
                     mark = "[!!]"
@@ -170,10 +190,17 @@ def run(p):
                     mark = "[~]"; ok_n += 1     # погранично, але не помилка
                 else:
                     mark = "[OK]"; ok_n += 1
+                dia_m = "[" + ",".join(f"{x:g}" for x in s["holes"]) + "]"
+                dia_d = "[" + ",".join(f"{x:g}" for x in best["dia"]) + "]"
+                inner_note = f" (+{best['inner']} контур.)" if best.get("inner") else ""
                 p(f"\n{mark} {short}\n")
-                p(f"      товщина : модель {s['t']:.2f} мм | DXF {th_dxf} мм\n")
-                p(f"      площа   : модель {s['area']:.0f} | DXF {best['area']:.0f} мм²  (відхил {bd*100:.1f}%)\n")
-                p(f"      отвори  : модель {mh} | DXF {dh}\n")
+                p(f"      матеріал/к-сть : {best['mat']} | {best['qty']} шт (з імені DXF)\n")
+                p(f"      товщина        : модель {s['t']:.2f} мм | DXF {th_dxf} мм\n")
+                p(f"      площа          : модель {s['area']:.0f} | DXF {best['area']:.0f} мм²  (відхил {bd*100:.1f}%)\n")
+                p(f"      отвори         : модель {mh} Ø{dia_m} | DXF {dh} Ø{dia_d}{inner_note}\n")
+                if miss:
+                    md = ", ".join(f"Ø{d:g}×{miss.count(d)}" for d in sorted(set(miss)))
+                    p(f"      !! немає в DXF : {md}\n")
                 if issues:
                     problems.append((short, issues))
 
