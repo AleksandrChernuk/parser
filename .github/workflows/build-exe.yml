@@ -21,14 +21,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install PyInstaller
-        run: pip install pyinstaller
+      - name: Install deps
+        run: pip install pyinstaller olefile
 
-      - name: Build single-file exe
-        run: pyinstaller --onefile --console --name check_dxf check_dxf.py
+      - name: Build exe (3D .ipt vs DXF)
+        run: pyinstaller --onefile --console --name check_ipt_vs_dxf check_ipt_vs_dxf.py
 
       - name: Upload exe
         uses: actions/upload-artifact@v4
         with:
-          name: check_dxf-windows
-          path: dist/check_dxf.exe
+          name: check_ipt_vs_dxf-windows
+          path: dist/check_ipt_vs_dxf.exe
