@@ -319,6 +319,12 @@ def run(out):
                     problems.append("в імені DXF немає: " + ", ".join(missing)
                                     + " (треба: товщина + матеріал + кількість)")
 
+            # --- опис (назва) деталі: модель vs DXF ---
+            if ip and dx:
+                di, dd = clean_desc(stem(ip)), clean_desc(stem(dx))
+                if di and dd and di != dd:
+                    problems.append(f"ОПИС у назві відрізняється: модель '{di}' / DXF '{dd}'")
+
             # --- товщина: модель vs DXF ---
             if ipt_th is not None and dxf_th is not None and abs(ipt_th - dxf_th) > 1e-6:
                 problems.append(f"ТОВЩИНА не збігається: модель {ipt_th} мм / DXF {dxf_th} мм")
