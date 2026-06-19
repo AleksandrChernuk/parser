@@ -194,9 +194,26 @@ ARTICLE_RE = re.compile(r"[A-Za-zА-Яа-яЇІЄҐієїґ]*\.?\d+(?:[.\-]\d+)+
 
 def article(name):
     """Найдовший код-артикул в імені (або None)."""
-    cands = [m.group(0) for m in ARTICLE_RE.finditer(name)]
-    cands = [c for c in cands if len(c) >= 5]
+    cands = [c for c in articles_in(name)]
     return max(cands, key=len) if cands else None
+
+
+def articles_in(name):
+    """Усі коди-артикули в імені (для розпізнавання неста з кількома деталями)."""
+    return {m.group(0) for m in ARTICLE_RE.finditer(name) if len(m.group(0)) >= 5}
+
+
+def clean_desc(name):
+    """Опис деталі = текст після артикула, без товщини/марки/кількості — для звірки назв."""
+    art = article(name)
+    s = name
+    if art and art in s:
+        s = s[s.index(art) + len(art):]
+    s = DXF_THK_RE.sub(" ", s)
+    s = GRADE_RE.sub(" ", s)
+    s = QTY_RE.sub(" ", s)
+    s = s.replace("_", " ")
+    return re.sub(r"\s+", " ", s).strip().lower()
 
 
 def run(out):
@@ -207,26 +224,46 @@ def run(out):
         p(f"Поточна папка: {ROOT}\n")
         return
 
-    # зіставлення: спершу за артикулом (код у будь-якому місці імені DXF),
-    # інакше — за повним ім'ям деталі в кінці імені DXF.
-    # Один DXF може бути парою до кількох деталей (розкрій-нест) — це дозволено.
-    matched_dxf = set()
-    pairs = []        # (ipt_path, dxf_path | None)
+    # зіставлення: за артикулом (код) + за описом (текст після коду).
+    # Це розрізняє деталі з однаковим артикулом ("Ребро" vs "Ребро 1") і терпить
+    # будь-який зайвий текст/порядок у назві. Нест (кілька артикулів у 1 DXF) дозволено.
+    dxf_arts = {d: articles_in(stem(d)) for d in dxfs}
+    cands = []        # (score, len_desc, ip, d)
     for ip in ipts:
         s = stem(ip)
-        art = article(s)
         proj = project_of(ip)
-        if art:
-            cand = [d for d in dxfs if art in stem(d) and project_of(d) == proj]
-        else:
-            cand = [d for d in dxfs
-                    if len(s) >= 3 and stem(d).endswith(s) and project_of(d) == proj]
-        cand.sort(key=lambda d: len(stem(d)))
-        match = cand[0] if cand else None
-        if match:
-            matched_dxf.add(match)
-        pairs.append((ip, match))
-    orphan_dxf = [d for d in dxfs if d not in matched_dxf]
+        a = article(s)
+        idesc = clean_desc(s)
+        for d in dxfs:
+            if project_of(d) != proj:
+                continue
+            ok = (a in dxf_arts[d]) if a else stem(d).endswith(s)
+            if not ok:
+                continue
+            ddesc = clean_desc(stem(d))
+            if idesc and idesc == ddesc:
+                sc = 3
+            elif idesc and (idesc in ddesc or ddesc in idesc):
+                sc = 2
+            else:
+                sc = 1
+            cands.append((sc, len(idesc), ip, d))
+
+    cands.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    ipt_match, used = {}, set()
+    for sc, _, ip, d in cands:
+        if ip in ipt_match:
+            continue
+        nest = len(dxf_arts[d]) > 1            # справжній розкрій-нест -> можна повторно
+        if not nest and d in used:
+            continue
+        ipt_match[ip] = d
+        if not nest:
+            used.add(d)
+
+    pairs = [(ip, ipt_match.get(ip)) for ip in ipts]
+    assigned = set(ipt_match.values())
+    orphan_dxf = [d for d in dxfs if d not in assigned]
 
     # групуємо за проєктом
     groups = {}
