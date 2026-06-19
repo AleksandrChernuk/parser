@@ -155,6 +155,17 @@ def stem(path):
     return os.path.splitext(os.path.basename(path))[0]
 
 
+# Артикул деталі: код виду RDN.1000.01.001 / ABC.2000 / XYZ.3000-12 тощо
+ARTICLE_RE = re.compile(r"[A-Za-zА-Яа-яЇІЄҐієїґ]*\.?\d+(?:[.\-]\d+)+")
+
+
+def article(name):
+    """Найдовший код-артикул в імені (або None)."""
+    cands = [m.group(0) for m in ARTICLE_RE.finditer(name)]
+    cands = [c for c in cands if len(c) >= 5]
+    return max(cands, key=len) if cands else None
+
+
 def run(out):
     p = out.write
     ipts, dxfs = collect_all()
@@ -163,21 +174,26 @@ def run(out):
         p(f"Поточна папка: {ROOT}\n")
         return
 
-    # зіставлення пар: ім'я .ipt має входити в ім'я .dxf; за збігу беремо найдовше
-    used_dxf = set()
+    # зіставлення: спершу за артикулом (код у будь-якому місці імені DXF),
+    # інакше — за повним ім'ям деталі в кінці імені DXF.
+    # Один DXF може бути парою до кількох деталей (розкрій-нест) — це дозволено.
+    matched_dxf = set()
     pairs = []        # (ipt_path, dxf_path | None)
     for ip in ipts:
         s = stem(ip)
+        art = article(s)
         proj = project_of(ip)
-        cand = [d for d in dxfs
-                if len(s) >= 3 and stem(d).endswith(s) and project_of(d) == proj]
+        if art:
+            cand = [d for d in dxfs if art in stem(d) and project_of(d) == proj]
+        else:
+            cand = [d for d in dxfs
+                    if len(s) >= 3 and stem(d).endswith(s) and project_of(d) == proj]
         cand.sort(key=lambda d: len(stem(d)))
-        match = None
-        for d in cand:
-            if d not in used_dxf:
-                match = d; used_dxf.add(d); break
+        match = cand[0] if cand else None
+        if match:
+            matched_dxf.add(match)
         pairs.append((ip, match))
-    orphan_dxf = [d for d in dxfs if d not in used_dxf]
+    orphan_dxf = [d for d in dxfs if d not in matched_dxf]
 
     # групуємо за проєктом
     groups = {}
