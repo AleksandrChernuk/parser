@@ -40,15 +40,22 @@ GRADE_RE = re.compile(
     re.IGNORECASE)
 
 
+QTY_RE = re.compile(r"(\d+)\s*шт", re.IGNORECASE)
+
+
 def dxf_thickness_material(fname):
-    th = mat = None
+    """Повертає (товщина, матеріал, кількість) з імені DXF. Будь-що -> None, якщо немає."""
+    th = mat = qty = None
     m = DXF_THK_RE.search(fname)
     if m:
         th = float(m.group(1).replace(",", "."))
     g = GRADE_RE.search(fname)
     if g:
         mat = re.sub(r"\s+", "", g.group(1))   # нормалізуємо: "Ст 3" -> "Ст3"
-    return th, mat
+    q = QTY_RE.search(fname)
+    if q:
+        qty = int(q.group(1))
+    return th, mat, qty
 
 
 # ---------- DXF: геометрія ----------
@@ -236,7 +243,7 @@ def run(out):
         mats = []
         for ip, dx in rows:
             if dx:
-                _, mt = dxf_thickness_material(os.path.basename(dx))
+                _, mt, _ = dxf_thickness_material(os.path.basename(dx))
                 if mt: mats.append(mt)
         dom_mat = max(set(mats), key=mats.count) if mats else None
 
@@ -250,10 +257,10 @@ def run(out):
             ipt_th = ipt_mat = None
             if ip:
                 ipt_th, ipt_mat = read_ipt(ip)
-            dxf_th = dxf_mat = None
+            dxf_th = dxf_mat = dxf_qty = None
             geom = None
             if dx:
-                dxf_th, dxf_mat = dxf_thickness_material(os.path.basename(dx))
+                dxf_th, dxf_mat, dxf_qty = dxf_thickness_material(os.path.basename(dx))
                 geom = analyze_dxf(dx)
 
             # покупні/стандартні деталі (без DXF і без листового матеріалу) — пропускаємо
@@ -265,19 +272,27 @@ def run(out):
             if dx is None:
                 problems.append("немає DXF для цієї 3D-моделі")
 
+            # --- обов'язкові поля в імені DXF: товщина + матеріал + кількість ---
+            if dx:
+                missing = []
+                if dxf_th is None: missing.append("товщина")
+                if dxf_mat is None: missing.append("матеріал")
+                if dxf_qty is None: missing.append("кількість")
+                if missing:
+                    problems.append("в імені DXF немає: " + ", ".join(missing)
+                                    + " (треба: товщина + матеріал + кількість)")
+
             # --- товщина: модель vs DXF ---
             if ipt_th is not None and dxf_th is not None and abs(ipt_th - dxf_th) > 1e-6:
                 problems.append(f"ТОВЩИНА не збігається: модель {ipt_th} мм / DXF {dxf_th} мм")
             if ip and ipt_th is None:
                 problems.append("у .ipt не знайдено поле товщини (Лист ...)")
-            if dx and dxf_th is None:
-                problems.append("в імені DXF не зчитати товщину (немає 'X мм')")
             # кілька різних DXF на один артикул з різною товщиною
             if ip:
                 art = article(name)
                 if art:
                     same = [d for d in dxfs if art in stem(d) and project_of(d) == proj]
-                    ths = {dxf_thickness_material(os.path.basename(d))[0] for d in same}
+                    ths = {dxf_thickness_material(os.path.basename(d))[0] for d in same}  # товщина
                     ths = {t for t in ths if t is not None}
                     if len(same) > 1 and len(ths) > 1:
                         problems.append(f"кілька DXF на артикул {art} з різною товщиною: {sorted(ths)}")
@@ -289,8 +304,6 @@ def run(out):
             # --- матеріал ---
             if dxf_mat and dom_mat and dxf_mat != dom_mat:
                 problems.append(f"матеріал DXF '{dxf_mat}' відрізняється від основного '{dom_mat}'")
-            if dx and dxf_mat is None:
-                problems.append("в імені DXF не розпізнано марку матеріалу")
 
             # --- геометрія DXF ---
             if geom and not geom.get("err"):
@@ -321,7 +334,8 @@ def run(out):
             if dx:
                 g = geom or {}
                 dxf_line = (f"DXF: {dxf_th if dxf_th is not None else '?'}мм "
-                            f"{dxf_mat or ''} | {g.get('w','?')}x{g.get('h','?')}мм | отв.{len(g.get('holes',[]))}")
+                            f"{dxf_mat or '?'} {dxf_qty if dxf_qty is not None else '?'}шт "
+                            f"| {g.get('w','?')}x{g.get('h','?')}мм | отв.{len(g.get('holes',[]))}")
             else:
                 dxf_line = "DXF: (нема)"
             p(f"{mark} {name}\n     {mdl}\n     {dxf_line}\n")
