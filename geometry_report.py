@@ -127,27 +127,20 @@ def run(p):
         if not steps or not dxfs:
             continue
         any_step = True
-        p("=" * 78 + "\n")
-        p(f"ПАПКА: {os.path.basename(folder)}\n")
+        p("\n" + "=" * 78 + "\n")
+        p(f"  ПАПКА: {os.path.basename(folder)}\n")
         p("=" * 78 + "\n")
 
-        # DXF таблиця
         dlist = []
         for f in sorted(dxfs):
             n = os.path.basename(f); gi = dxf_info(f); th, mat, qty = dxf_meta(n)
             dlist.append({"name": n, "th": th, "mat": mat, "qty": qty, **gi})
-        p("DXF-деталі:\n")
-        p(f"  {'площа,мм²':>10} {'товщ':>5} {'мат':>6} {'к-сть':>5}  {'габарит':>14}  отв  назва\n")
-        for d in dlist:
-            p(f"  {('%.0f'%d['area']) if d['area'] else '?':>10} {str(d['th']):>5} "
-              f"{str(d['mat']):>6} {str(d['qty']):>5}  {d['w']}x{d['h']:>0}  {d['holes']:>3}  {d['name']}\n")
 
-        # STEP тіла
+        problems = []      # рядки для підсумку
+        matched_dxf = set()
+        ok_n = 0; part_n = 0
         for sp in steps:
-            sols = step_solids(sp)
-            p(f"\n3D-складання: {os.path.basename(sp)} — тіл: {len(sols)}\n")
-            p(f"  {'тіло':>5} {'товщ':>5} {'площа,мм²':>10}  {'3D-габарит':>16}  ->  DXF (відхил площі)\n")
-            for i, s in enumerate(sols):
+            for s in step_solids(sp):
                 # найкращий DXF за товщиною+площею
                 best, bd = None, 1e9
                 for d in dlist:
@@ -155,16 +148,51 @@ def run(p):
                     if d["th"] and abs(d["th"] - round(s["t"])) > 1.0: continue
                     dd = abs(d["area"] - s["area"]) / s["area"]
                     if dd < bd: bd, best = dd, d
-                bx = "x".join(str(x) for x in s["bbox"])
-                mh = len(s["holes"])
-                if best and bd <= 0.20:
-                    flag = "OK" if bd < 0.05 else ("~ перевір" if bd < 0.10 else "!!РІЗНІ")
-                    dh = best["holes"]
-                    hole_note = "" if mh == dh else f"  !! ОТВОРИ: модель {mh} / DXF {dh}"
-                    tgt = f"{best['name'][:34]} ({bd*100:.1f}% {flag}){hole_note}"
+                if not best or bd > 0.20:
+                    continue  # стороння деталь складання — пропускаємо
+                part_n += 1
+                matched_dxf.add(best["name"])
+                mh, dh = len(s["holes"]), best["holes"]
+                short = best["name"]
+                # вердикти
+                area_ok = bd < 0.05
+                hole_ok = (mh == dh)
+                th_dxf = best["th"]
+                th_ok = (th_dxf is None) or abs(round(s["t"]) - th_dxf) < 0.6
+                issues = []
+                if not th_ok: issues.append(f"товщина: модель {s['t']:.1f} / DXF {th_dxf}")
+                if bd >= 0.10: issues.append(f"площа розходиться на {bd*100:.0f}%")
+                if not hole_ok: issues.append(f"отвори: модель {mh} / DXF {dh}")
+
+                if issues:
+                    mark = "[!!]"
+                elif bd >= 0.05:
+                    mark = "[~]"; ok_n += 1     # погранично, але не помилка
                 else:
-                    tgt = "— немає відповідного DXF (стороння деталь?)"
-                p(f"  {i+1:>5} {s['t']:>5.2f} {s['area']:>10.0f} отв.{mh:>2}  {bx:>14}  ->  {tgt}\n")
+                    mark = "[OK]"; ok_n += 1
+                p(f"\n{mark} {short}\n")
+                p(f"      товщина : модель {s['t']:.2f} мм | DXF {th_dxf} мм\n")
+                p(f"      площа   : модель {s['area']:.0f} | DXF {best['area']:.0f} мм²  (відхил {bd*100:.1f}%)\n")
+                p(f"      отвори  : модель {mh} | DXF {dh}\n")
+                if issues:
+                    problems.append((short, issues))
+
+        # DXF без 3D-тіла у складанні
+        for d in dlist:
+            if d["name"] not in matched_dxf:
+                problems.append((d["name"], ["немає 3D-тіла у складанні (перевір комплектність)"]))
+
+        # підсумок по папці
+        p("\n" + "-" * 78 + "\n")
+        p(f"  ПІДСУМОК: деталей звірено {part_n}, без проблем {ok_n}, з проблемами {part_n - ok_n}\n")
+        if problems:
+            p("\n  ПРОБЛЕМИ ДЛЯ ВИПРАВЛЕННЯ:\n")
+            for name, iss in problems:
+                p(f"   • {name}\n")
+                for it in iss:
+                    p(f"       - {it}\n")
+        else:
+            p("  Розбіжностей не знайдено.\n")
         p("\n")
     if not any_step:
         p("Не знайдено папки, де поруч є і STEP (.stp/.step), і DXF.\n")
