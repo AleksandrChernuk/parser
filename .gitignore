@@ -1,0 +1,18 @@
+# Тяжкі CAD-дані не потрібні для збірки .exe — лишаються локально
+RDN.*/
+*.step
+*.ipt
+*.iam
+*.idw
+*.dxf
+*.dwg
+*.pdf
+
+# Службове
+.venv/
+__pycache__/
+build/
+dist/
+*.spec
+report.txt
+.DS_Store

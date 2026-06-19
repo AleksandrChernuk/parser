@@ -1,0 +1,34 @@
+name: Build check_dxf.exe
+
+# Збирає Windows .exe у хмарі (безкоштовна Windows-машина GitHub).
+# Запуск: вкладка Actions -> Build check_dxf.exe -> Run workflow.
+# Готовий файл -> внизу сторінки запуску, розділ Artifacts -> check_dxf-windows.
+
+on:
+  workflow_dispatch:        # ручний запуск кнопкою
+  push:
+    paths:
+      - check_dxf.py
+      - .github/workflows/build-exe.yml
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build single-file exe
+        run: pyinstaller --onefile --console --name check_dxf check_dxf.py
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: check_dxf-windows
+          path: dist/check_dxf.exe
